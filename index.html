@@ -234,18 +234,33 @@ canvas{ max-width:100%; }
 
 /* ---- briefing ---- */
 .briefing-output{
-  font-size:14px; line-height:1.7; white-space:pre-wrap; color:var(--text);
+  font-size:14px; line-height:1.7; color:var(--text);
   border-left:2px solid var(--cyan-dim); padding-left:16px; margin-top:16px;
 }
-.briefing-output .hl{ color:var(--cyan); font-weight:600; }
+.briefing-output p{ margin:0 0 10px; }
+.briefing-output ul{ margin:0 0 14px; padding-left:20px; }
+.briefing-output li{ margin-bottom:6px; }
+.briefing-output strong{ color:var(--cyan); font-weight:700; }
+.briefing-heading{
+  font-family:'Rajdhani',sans-serif; font-weight:700; font-size:13px; letter-spacing:0.08em;
+  color:var(--amber); text-transform:uppercase; margin:18px 0 8px;
+}
+.briefing-heading:first-child{ margin-top:0; }
 .thinking-line{ display:flex; align-items:center; gap:10px; color:var(--text-dim); font-size:13.5px; font-family:'Rajdhani',sans-serif; letter-spacing:0.04em; }
 .pulse{ width:7px; height:7px; border-radius:50%; background:var(--cyan); animation:pulse 1.1s infinite ease-in-out; }
 @keyframes pulse{ 0%,100%{opacity:0.3; transform:scale(0.8);} 50%{opacity:1; transform:scale(1.15);} }
 
 .chat-thread{ display:flex; flex-direction:column; gap:12px; margin-top:16px; }
-.chat-msg{ max-width:82%; padding:10px 14px; border-radius:8px; font-size:14px; line-height:1.55; white-space:pre-wrap; }
-.chat-msg.user{ align-self:flex-end; background:rgba(139,124,255,0.12); border:1px solid rgba(139,124,255,0.3); }
+.chat-msg{ max-width:82%; padding:10px 14px; border-radius:8px; font-size:14px; line-height:1.55; }
+.chat-msg.user{ align-self:flex-end; background:rgba(139,124,255,0.12); border:1px solid rgba(139,124,255,0.3); white-space:pre-wrap; }
 .chat-msg.atlas{ align-self:flex-start; background:rgba(63,224,232,0.07); border:1px solid var(--line); }
+.chat-msg.atlas p{ margin:0 0 8px; }
+.chat-msg.atlas p:last-child{ margin-bottom:0; }
+.chat-msg.atlas ul{ margin:0 0 8px; padding-left:18px; }
+.chat-msg.atlas li{ margin-bottom:4px; }
+.chat-msg.atlas strong{ color:var(--cyan); font-weight:700; }
+.chat-msg.atlas .briefing-heading{ font-size:11.5px; margin:10px 0 6px; }
+.chat-msg.atlas .briefing-heading:first-child{ margin-top:0; }
 .chat-input-row{ display:flex; gap:10px; margin-top:14px; }
 .chat-input-row input{ flex:1; }
 
@@ -623,8 +638,8 @@ function exerciseGroups(session){
 
 /* ============================= PR DETECTION ============================= */
 function computePRs(){
-  const best = new Map(); // exercise -> best est 1RM so far
-  const prs = []; // {exercise, date, weight_kg, reps, est1rm}
+  const best = new Map();
+  const prs = [];
   const sorted = [...state.sets].filter(s=>s.set_type!=='warmup' && s.weight_kg>0 && s.reps>0)
     .sort((a,b)=> new Date(a.start_time.replace(' ','T')) - new Date(b.start_time.replace(' ','T')));
   for(const s of sorted){
@@ -654,7 +669,6 @@ function computeStats(){
   const prs = computePRs();
   const prs30 = prs.filter(p=>{ const d=parseDateSafe(p.date); return d && d>=cutoff30; });
 
-  // weekly streak: consecutive weeks (including current) with >=1 session
   let streak = 0;
   let cursor = startOfWeek(now);
   const weekSet = new Set(sessions.map(s=>{ const d=parseDateSafe(s.start_time); return d? isoWeekKey(d):null; }).filter(Boolean));
@@ -803,6 +817,38 @@ function renderRecentSessions(sessions, prs){
 }
 function escapeHtml(s){
   return (s||'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function formatAIText(raw){
+  const escaped = escapeHtml(raw);
+  const lines = escaped.split('\n');
+  let html = '';
+  let inList = false;
+  const closeList = ()=>{ if(inList){ html += '</ul>'; inList = false; } };
+
+  for(let line of lines){
+    const trimmed = line.trim();
+    if(trimmed === ''){ closeList(); continue; }
+
+    if(/^[A-Z][A-Z0-9 &\-\/]{3,60}:?$/.test(trimmed) && /[A-Z]{3,}/.test(trimmed)){
+      closeList();
+      html += `<div class="briefing-heading">${trimmed.replace(/:$/,'')}</div>`;
+      continue;
+    }
+
+    if(/^[-*•]\s+/.test(trimmed)){
+      if(!inList){ html += '<ul>'; inList = true; }
+      html += `<li>${boldify(trimmed.replace(/^[-*•]\s+/,''))}</li>`;
+      continue;
+    }
+
+    closeList();
+    html += `<p>${boldify(trimmed)}</p>`;
+  }
+  closeList();
+  return html;
+}
+function boldify(s){
+  return s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
 }
 
 /* ============================= HISTORY VIEW ============================= */
@@ -1108,7 +1154,9 @@ const SYSTEM_PREAMBLE = `You are ATLAS, an onboard training-intelligence system 
 - Roughly 10-20 hard working sets per muscle group per week for growth (volume-landmark research, e.g. Schoenfeld et al.); lagging muscles may need volume toward the higher end.
 - Hypertrophy rep ranges roughly 6-15, with room for some heavier low-rep work too.
 - Adequate recovery: avoid recommending the same muscle group on back-to-back days.
-For V-taper specifically: prioritize lat width (pull-ups, lat pulldowns, wide-grip rows), rear and side deltoid work for shoulder width, and overall upper-back thickness. Waist appearance is driven mainly by body-fat level and posture, not ab/oblique training volume — heavy weighted oblique work can thicken the waist rather than narrow it, so flag that if relevant. You are not a doctor, physical therapist, or dietitian: do not diagnose injuries, prescribe rehab, or give specific caloric/macro numbers — you can note that leanness is diet-driven without prescribing a diet. Base every statement strictly on the JSON data provided below; never invent numbers you don't have. Speak like a calm, precise onboard computer — direct, data-grounded, zero fluff. Keep responses under 500 words.`;
+For V-taper specifically: prioritize lat width (pull-ups, lat pulldowns, wide-grip rows), rear and side deltoid work for shoulder width, and overall upper-back thickness. Waist appearance is driven mainly by body-fat level and posture, not ab/oblique training volume — heavy weighted oblique work can thicken the waist rather than narrow it, so flag that if relevant. You are not a doctor, physical therapist, or dietitian: do not diagnose injuries, prescribe rehab, or give specific caloric/macro numbers — you can note that leanness is diet-driven without prescribing a diet. Base every statement strictly on the JSON data provided below; never invent numbers you don't have. Speak like a calm, precise onboard computer — direct, data-grounded, zero fluff. Keep responses under 500 words.
+
+FORMATTING RULES (strict): Write in short, skimmable chunks, never dense paragraphs. Use "**text**" only around the 2-4 most important words per section, not whole sentences. Prefer bullet points (each starting with "- ") over prose wherever you're listing more than one thing — exercises, numbers, or suggestions always go in bullets, one per line. Keep paragraphs, when used, to 1-2 short sentences max. Leave a blank line between sections.`;
 
 async function callAI(messages, system){
   const response = await fetch('/.netlify/functions/atlas-chat', {
@@ -1137,7 +1185,7 @@ async function generateBriefing(){
     document.getElementById('briefing-loading').style.display = 'none';
     const out = document.getElementById('briefing-output');
     out.style.display = 'block';
-    out.textContent = text;
+    out.innerHTML = formatAIText(text);
     chatHistory = [{role:'user', content:userPrompt}, {role:'assistant', content:text}];
   }catch(err){
     document.getElementById('briefing-loading').style.display = 'none';
@@ -1179,14 +1227,15 @@ function appendChatBubble(role, text, pending){
   const div = document.createElement('div');
   div.className = 'chat-msg '+(role==='user'?'user':'atlas');
   if(pending) div.dataset.pending = '1';
-  div.textContent = text;
+  if(role==='user'){ div.textContent = text; }
+  else{ div.innerHTML = pending ? escapeHtml(text) : formatAIText(text); }
   thread.appendChild(div);
   thread.scrollTop = thread.scrollHeight;
 }
 function updateLastAtlasBubble(text){
   const thread = document.getElementById('chat-thread');
   const pending = thread.querySelector('[data-pending="1"]');
-  if(pending){ pending.textContent = text; pending.removeAttribute('data-pending'); }
+  if(pending){ pending.innerHTML = formatAIText(text); pending.removeAttribute('data-pending'); }
   thread.scrollTop = thread.scrollHeight;
 }
 
