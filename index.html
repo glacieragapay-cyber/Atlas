@@ -273,6 +273,28 @@ canvas{ max-width:100%; }
 
 .muted-note{ font-size:12px; color:var(--text-faint); margin-top:10px; }
 
+/* ---- progressive overload ---- */
+.prog-card{ border:1px solid var(--line); border-radius:6px; margin-bottom:8px; overflow:hidden; }
+.prog-card-head{
+  display:flex; align-items:center; justify-content:space-between; gap:12px;
+  padding:12px 14px; cursor:pointer; background:rgba(255,255,255,0.015); flex-wrap:wrap;
+}
+.prog-card-head:hover{ background:rgba(63,224,232,0.04); }
+.prog-name{ font-weight:600; font-size:14px; }
+.prog-meta{ font-size:12px; color:var(--text-faint); margin-top:2px; }
+.prog-badge{
+  font-family:'Rajdhani',sans-serif; font-weight:700; font-size:12.5px; letter-spacing:0.03em;
+  padding:5px 10px; border-radius:5px; white-space:nowrap;
+}
+.prog-badge.inc{ color:#5fe08a; background:rgba(95,224,138,0.1); border:1px solid rgba(95,224,138,0.35); }
+.prog-badge.add{ color:var(--cyan); background:rgba(63,224,232,0.1); border:1px solid var(--cyan-dim); }
+.prog-badge.build{ color:var(--violet); background:rgba(139,124,255,0.1); border:1px solid rgba(139,124,255,0.35); }
+.prog-plateau{ font-size:12px; color:var(--amber); padding:0 14px 10px; }
+.prog-detail{ display:none; padding:0 14px 14px; border-top:1px solid var(--line); }
+.prog-detail.open{ display:block; }
+.prog-pr{ font-size:13px; color:var(--text); padding-top:10px; margin-bottom:8px; }
+.prog-canvas{ max-height:110px; }
+
 /* ---- mobile ---- */
 @media (max-width:760px){
   .app{ flex-direction:column; }
@@ -304,6 +326,7 @@ canvas{ max-width:100%; }
     </div>
     <nav class="nav">
       <button class="nav-btn active" data-view="dashboard"><span class="ico">◈</span> Dashboard</button>
+      <button class="nav-btn" data-view="progression"><span class="ico">⟰</span> Progressive Overload</button>
       <button class="nav-btn" data-view="log"><span class="ico">＋</span> Log Workout</button>
       <button class="nav-btn" data-view="import"><span class="ico">⇩</span> Import Data</button>
       <button class="nav-btn" data-view="history"><span class="ico">☰</span> History</button>
@@ -374,6 +397,39 @@ canvas{ max-width:100%; }
           <div class="panel-head"><h2>Recent Sessions</h2></div>
           <div class="panel-body" id="recent-sessions"></div>
         </div>
+      </div>
+    </section>
+
+    <!-- PROGRESSIVE OVERLOAD -->
+    <section class="view" id="view-progression">
+      <div class="view-header">
+        <h1>Progressive Overload Engine</h1>
+        <p>For every exercise, ATLAS checks your last top set against your target rep range and tells you exactly what to do next session.</p>
+      </div>
+
+      <div class="panel" style="margin-bottom:16px;">
+        <div class="panel-body">
+          <div class="form-row" style="margin-bottom:0;">
+            <div class="field" style="max-width:140px;">
+              <label>Rep range low</label>
+              <input type="number" id="prog-rep-low" min="1" max="30" step="1">
+            </div>
+            <div class="field" style="max-width:140px;">
+              <label>Rep range high</label>
+              <input type="number" id="prog-rep-high" min="1" max="30" step="1">
+            </div>
+            <div class="field" style="max-width:160px;">
+              <label>Weight step</label>
+              <input type="number" id="prog-increment" min="0.25" step="0.25">
+            </div>
+          </div>
+          <div class="muted-note">When your top set hits the high end of this range, ATLAS suggests adding weight. Below the low end, it suggests staying at the same weight until you're in range.</div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><h2>Exercises</h2></div>
+        <div class="panel-body" id="progression-list"></div>
       </div>
     </section>
 
@@ -503,7 +559,7 @@ canvas{ max-width:100%; }
 /* ============================= STATE ============================= */
 const STORAGE_KEY = 'atlas-data';
 let state = { sets: [], settings: { unit: 'kg' } };
-let chatHistory = []; // {role, content} session-only
+let chatHistory = [];
 let charts = {};
 
 function uid(row){
@@ -520,6 +576,7 @@ async function loadState(){
   }catch(e){
     console.error('Could not load saved data', e);
   }
+  state.settings = Object.assign({ unit:'kg', targetRepLow:8, targetRepHigh:12, weightIncrementKg:2.5 }, state.settings||{});
 }
 async function saveState(){
   try{
@@ -545,7 +602,6 @@ function parseDateSafe(v){
   if(v===null || v===undefined || v==='') return null;
   const raw = String(v).trim();
 
-  // Unix timestamp (seconds or milliseconds)
   if(/^\d{9,13}$/.test(raw)){
     const num = Number(raw);
     const ms = raw.length>=13 ? num : num*1000;
@@ -553,25 +609,21 @@ function parseDateSafe(v){
     if(!isNaN(d.getTime())) return d;
   }
 
-  // Native parse first — covers ISO strings and most US-style formats
   let d = new Date(raw);
   if(!isNaN(d.getTime())) return d;
 
-  // "YYYY-MM-DD HH:MM:SS" (space instead of T)
   d = new Date(raw.replace(' ', 'T'));
   if(!isNaN(d.getTime())) return d;
 
-  // "DD/MM/YYYY[ HH:MM[:SS]]" — day-first, common outside the US
   let m = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
   if(m){
     const day = parseInt(m[1],10), month = parseInt(m[2],10);
-    if(day > 12){ // unambiguous day-first
+    if(day > 12){
       d = new Date(parseInt(m[3],10), month-1, day, m[4]?parseInt(m[4],10):0, m[5]?parseInt(m[5],10):0, m[6]?parseInt(m[6],10):0);
       if(!isNaN(d.getTime())) return d;
     }
   }
 
-  // "DD-MM-YYYY" or "DD.MM.YYYY"
   m = raw.match(/^(\d{1,2})[.\-](\d{1,2})[.\-](\d{4})/);
   if(m){
     d = new Date(parseInt(m[3],10), parseInt(m[2],10)-1, parseInt(m[1],10));
@@ -849,6 +901,142 @@ function formatAIText(raw){
 }
 function boldify(s){
   return s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+}
+
+/* ============================= PROGRESSIVE OVERLOAD ENGINE ============================= */
+function buildExerciseTimelines(){
+  const bySessionExercise = new Map();
+  for(const s of state.sets){
+    if(s.set_type==='warmup') continue;
+    if(!s.weight_kg || !s.reps) continue;
+    const key = s.exercise_title+'|'+s.start_time;
+    const est = epley1RM(s.weight_kg, s.reps);
+    const cur = bySessionExercise.get(key);
+    if(!cur || est > cur.est1rm || (est===cur.est1rm && s.weight_kg>cur.weight)){
+      bySessionExercise.set(key, {name:s.exercise_title, start_time:s.start_time, weight:s.weight_kg, reps:s.reps, est1rm:est});
+    }
+  }
+  const map = new Map();
+  for(const rec of bySessionExercise.values()){
+    if(!map.has(rec.name)) map.set(rec.name, []);
+    map.get(rec.name).push(rec);
+  }
+  for(const arr of map.values()){
+    arr.sort((a,b)=> (parseDateSafe(a.start_time)||0) - (parseDateSafe(b.start_time)||0));
+  }
+  return map;
+}
+function analyzeExercise(timeline){
+  const last = timeline[timeline.length-1];
+  const prev = timeline.length>1 ? timeline[timeline.length-2] : null;
+  const low = state.settings.targetRepLow, high = state.settings.targetRepHigh;
+  const inc = state.settings.weightIncrementKg;
+
+  let suggestionType, suggestionText;
+  if(last.reps >= high){
+    suggestionType = 'increase';
+    suggestionText = `+${fmt(toDisplayWeight(inc),2).replace(/\.?0+$/,'')}${unitLabel()} next session`;
+  } else if(last.reps < low){
+    suggestionType = 'build';
+    suggestionText = `same weight — build to ${low} reps`;
+  } else {
+    suggestionType = 'addrep';
+    suggestionText = `same weight — add 1-2 reps`;
+  }
+
+  const plateaued = !!(prev && last.weight <= prev.weight && last.reps <= prev.reps);
+
+  let best = timeline[0];
+  for(const t of timeline) if(t.est1rm > best.est1rm) best = t;
+
+  return { last, prev, suggestionType, suggestionText, plateaued, best };
+}
+let progCharts = {};
+let progRows = [];
+function renderProgression(){
+  const container = document.getElementById('progression-list');
+  document.getElementById('prog-rep-low').value = state.settings.targetRepLow;
+  document.getElementById('prog-rep-high').value = state.settings.targetRepHigh;
+  document.getElementById('prog-increment').value = Math.round(toDisplayWeight(state.settings.weightIncrementKg)*100)/100;
+
+  const timelines = buildExerciseTimelines();
+  if(timelines.size===0){
+    container.innerHTML = '<div class="muted-note">No completed working sets yet — log or import workouts to activate the engine.</div>';
+    progRows = [];
+    return;
+  }
+  progRows = [...timelines.entries()].map(([name, timeline])=>({name, timeline, analysis: analyzeExercise(timeline)}));
+  const order = {increase:0, addrep:1, build:2};
+  progRows.sort((a,b)=>{
+    const byType = order[a.analysis.suggestionType]-order[b.analysis.suggestionType];
+    if(byType!==0) return byType;
+    return (parseDateSafe(b.analysis.last.start_time)||0) - (parseDateSafe(a.analysis.last.start_time)||0);
+  });
+
+  container.innerHTML = progRows.map((r,i)=>{
+    const a = r.analysis;
+    const badgeClass = a.suggestionType==='increase' ? 'inc' : a.suggestionType==='addrep' ? 'add' : 'build';
+    const badgeIcon = a.suggestionType==='increase' ? '▲' : a.suggestionType==='addrep' ? '＋' : '↻';
+    const lastDate = parseDateSafe(a.last.start_time);
+    const bestDate = parseDateSafe(a.best.start_time);
+    return `
+    <div class="prog-card">
+      <div class="prog-card-head" data-pidx="${i}">
+        <div>
+          <div class="prog-name">${escapeHtml(r.name)}</div>
+          <div class="prog-meta">Last: ${lastDate?fmtDate(lastDate):'—'} · ${fmt(toDisplayWeight(a.last.weight),1)}${unitLabel()} × ${a.last.reps}</div>
+        </div>
+        <div class="prog-badge ${badgeClass}">${badgeIcon} ${a.suggestionText}</div>
+      </div>
+      ${a.plateaued ? `<div class="prog-plateau">No progress vs. previous session — consider extra recovery, a deload, or a variation.</div>` : ''}
+      <div class="prog-detail" id="prog-detail-${i}">
+        <div class="prog-pr">PR: ${fmt(toDisplayWeight(a.best.weight),1)}${unitLabel()} × ${a.best.reps} <span class="muted-note" style="margin:0;">(est. 1RM ${fmt(toDisplayWeight(a.best.est1rm),1)}${unitLabel()} · ${bestDate?fmtDate(bestDate):''})</span></div>
+        <canvas class="prog-canvas" id="prog-canvas-${i}" height="90"></canvas>
+      </div>
+    </div>`;
+  }).join('');
+
+  container.querySelectorAll('.prog-card-head').forEach(head=>{
+    head.addEventListener('click', ()=>{
+      const idx = head.dataset.pidx;
+      const detail = document.getElementById('prog-detail-'+idx);
+      const wasOpen = detail.classList.contains('open');
+      detail.classList.toggle('open');
+      if(!wasOpen && !progCharts[idx]){
+        renderProgChart(idx, progRows[idx].timeline);
+      }
+    });
+  });
+}
+function renderProgChart(idx, timeline){
+  const ctx = document.getElementById('prog-canvas-'+idx);
+  if(!ctx) return;
+  const labels = timeline.map(t=>{ const d=parseDateSafe(t.start_time); return d? d.toLocaleDateString(undefined,{month:'short',day:'numeric'}) : ''; });
+  const data = timeline.map(t=>toDisplayWeight(t.weight));
+  progCharts[idx] = new Chart(ctx, {
+    type:'line',
+    data:{ labels, datasets:[{ data, borderColor:'#3fe0e8', backgroundColor:'rgba(63,224,232,0.12)', fill:true, tension:0.3, pointRadius:2, pointBackgroundColor:'#3fe0e8', borderWidth:2 }]},
+    options:{
+      plugins:{ legend:{display:false} },
+      scales:{
+        x:{ grid:{color:'rgba(255,255,255,0.04)'}, ticks:{color:'#7ea3ac', font:{size:9.5}} },
+        y:{ grid:{color:'rgba(255,255,255,0.04)'}, ticks:{color:'#7ea3ac', font:{size:9.5}} }
+      }
+    }
+  });
+}
+async function updateProgSettings(){
+  const low = parseInt(document.getElementById('prog-rep-low').value,10);
+  const high = parseInt(document.getElementById('prog-rep-high').value,10);
+  const incDisplay = parseFloat(document.getElementById('prog-increment').value);
+  if(!isNaN(low)) state.settings.targetRepLow = Math.max(1, low);
+  if(!isNaN(high)) state.settings.targetRepHigh = Math.max(state.settings.targetRepLow, high);
+  if(!isNaN(incDisplay) && incDisplay>0){
+    state.settings.weightIncrementKg = state.settings.unit==='lbs' ? incDisplay*0.453592 : incDisplay;
+  }
+  await saveState();
+  progCharts = {};
+  renderProgression();
 }
 
 /* ============================= HISTORY VIEW ============================= */
@@ -1247,6 +1435,7 @@ function showView(name){
   const btn = document.querySelector(`.nav-btn[data-view="${name}"]`);
   if(btn) btn.classList.add('active');
   if(name==='history') renderHistory(document.getElementById('history-filter').value);
+  if(name==='progression') renderProgression();
 }
 let toastTimer;
 function showToast(msg){
@@ -1291,6 +1480,10 @@ async function init(){
   });
 
   document.getElementById('history-filter').addEventListener('input', e=>renderHistory(e.target.value));
+
+  document.getElementById('prog-rep-low').addEventListener('change', updateProgSettings);
+  document.getElementById('prog-rep-high').addEventListener('change', updateProgSettings);
+  document.getElementById('prog-increment').addEventListener('change', updateProgSettings);
 
   document.getElementById('generate-briefing-btn').addEventListener('click', generateBriefing);
   document.getElementById('chat-send-btn').addEventListener('click', sendChatMessage);
